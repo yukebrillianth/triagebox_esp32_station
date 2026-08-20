@@ -1,0 +1,15 @@
+dependencies:
+  # NEITHER of these ships inside IDF v6 any more, and both fail the same way:
+  # CMake "Failed to resolve component ... unknown name" at configure time.
+  #
+  # w5500: the SPI Ethernet drivers were moved out of esp_eth to the registry
+  #   (espressif/esp-eth-drivers). Headers are esp_eth_mac_w5500.h /
+  #   esp_eth_phy_w5500.h; on v5 they lived in esp_eth. The old Kconfig symbol
+  #   CONFIG_ETH_SPI_ETHERNET_W5500 no longer exists at all.
+  # mqtt: esp-mqtt was moved out of IDF in v6. Same esp_mqtt_client_* API,
+  #   same "mqtt" component name, just no longer bundled.
+  #
+  # Both are added to REQUIRES automatically by the component manager, so
+  # main/CMakeLists.txt must NOT list them.
+  espressif/w5500: "^1.0.1"
+  espressif/mqtt: "^1.1.0"

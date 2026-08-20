@@ -1,0 +1,47 @@
+CONFIG_IDF_TARGET="esp32"
+
+# UART0 console only: 12/13/14/15 are consumed by SPI2, so there is no JTAG on
+# this board. See main/tb_station_pins.h.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# The W5500 driver is a managed component (see main/idf_component.yml), not a
+# Kconfig option -- IDF v6 moved SPI Ethernet out of esp_eth. Do not re-add
+# CONFIG_ETH_SPI_ETHERNET_W5500; that symbol no longer exists.
+
+# Dual core, split by role: the network stack on core 0, the LoRa poll task on
+# core 1 (pinned in station_poll.c). The poll task must be listening for the
+# whole of a node's 250ms reply window, and lwIP or a TCP retransmit holding
+# core 0 for tens of milliseconds would otherwise clip the preamble off a reply
+# -- which looks exactly like a dead node. Neither core is close to busy; this
+# is isolation, not load balancing.
+CONFIG_MQTT_TASK_CORE_SELECTION_ENABLED=y
+CONFIG_MQTT_USE_CORE_0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# Station settings that must survive a regenerated sdkconfig.
+#
+# These were set in menuconfig and were silently lost the first time sdkconfig
+# was deleted to pick up the core-affinity symbols above -- it came back at the
+# Kconfig defaults, which are DHCP and one node. A station that quietly reverts
+# to DHCP on a direct cable has no IP at all, and the failure shows up as "MQTT
+# never connects", nowhere near the cause. Anything that must not evaporate
+# belongs here rather than only in menuconfig.
+#
+# 20 nodes is the proof-of-concept target, so the station polls the full cycle
+# even while fewer boards exist: absent nodes cost a slot of dead air each and
+# publish a retained OFFLINE after ~45s, but node 1's cadence is unaffected
+# (the cycle is paced by LORA_POLL_PERIOD_MS, not by the node count).
+CONFIG_TB_NODE_COUNT=20
+
+# Direct Ethernet cable to the PC: no DHCP server, no gateway, no DNS. The
+# gateway address is the PC and is also where Mosquitto listens, which is why
+# the broker URI is the same host.
+CONFIG_TB_ETH_STATIC_IP=y
+CONFIG_TB_ETH_IP="192.168.50.50"
+CONFIG_TB_ETH_NETMASK="255.255.255.0"
+CONFIG_TB_ETH_GW="192.168.50.1"
+CONFIG_TB_MQTT_URI="mqtt://192.168.50.1:1883"
+
+# CONFIG_TB_MQTT_USERNAME / _PASSWORD are deliberately absent: this file is
+# committed. Set credentials in menuconfig, where they stay in the per-machine
+# sdkconfig -- and know that they are what a regeneration will take with it.

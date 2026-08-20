@@ -1,0 +1,76 @@
+menu "TriageBox Station"
+
+    config TB_STATION_ID
+        string "Station ID (MQTT topic segment)"
+        default "st-01"
+        help
+            Becomes {station_id} in triagebox/{station_id}/{node_id}/vital.
+            The backend drops packets from unregistered station IDs, so this
+            must match a seeded station. Demo seeds are st-01 and st-02.
+
+    config TB_STATION_ADDR
+        int "Station address on the LoRa link (1-254)"
+        range 1 254
+        default 1
+        help
+            The uint8 that goes in the poll packet's station_id field. This is
+            the radio address, NOT the MQTT topic segment above -- the backend
+            never sees it. Two stations sharing one channel must differ here,
+            or their nodes cannot tell whose poll they are answering.
+
+    config TB_NODE_COUNT
+        int "Nodes to poll each cycle (1-20)"
+        range 1 20
+        default 1
+        help
+            The station polls node addresses 1..N in order, once per cycle.
+            Keep this at the number of nodes that actually exist: every
+            configured-but-absent node costs a full slot of dead air waiting
+            for a reply that never comes.
+
+    config TB_MQTT_URI
+        string "MQTT broker URI"
+        default "mqtt://192.168.1.10:1883"
+        help
+            Full URI including scheme and port, e.g. mqtt://host:1883.
+
+    config TB_MQTT_USERNAME
+        string "MQTT username (empty for none)"
+        default ""
+
+    config TB_MQTT_PASSWORD
+        string "MQTT password (empty for none)"
+        default ""
+
+    config TB_ETH_STATIC_IP
+        bool "Use a static IP instead of DHCP"
+        default n
+        help
+            Required when the W5500 is cabled directly to a PC: a PC
+            Ethernet port runs no DHCP server, so the lease never arrives
+            and the link sits up forever with no address. Set the PC's
+            adapter to 192.168.50.1/255.255.255.0 to match the defaults
+            below. Leave this off when the station is plugged into a router.
+            No DNS is configured here, so the broker URI must be an IP
+            literal.
+
+    config TB_ETH_IP
+        string "Static IP address"
+        depends on TB_ETH_STATIC_IP
+        default "192.168.50.50"
+
+    config TB_ETH_NETMASK
+        string "Static netmask"
+        depends on TB_ETH_STATIC_IP
+        default "255.255.255.0"
+
+    config TB_ETH_GW
+        string "Static gateway"
+        depends on TB_ETH_STATIC_IP
+        default "192.168.50.1"
+        help
+            On a direct PC link there is no router, so this is just the
+            PC's address. Nothing routes through it -- station and broker
+            are on the same subnet -- but lwIP wants a value.
+
+endmenu
