@@ -209,7 +209,17 @@ esp_err_t sx1278_init(void)
 
 	/* LowDataRateOptimize off: it is required only when symbol time exceeds
 	 * 16ms, and SF7/BW125 is ~1ms. The node's setAutoLDO() computes the same
-	 * answer for these settings. AGC on. */
+	 * answer for these settings.
+	 *
+	 * TWO TRAPS IF THE SPREADING FACTOR EVER CHANGES. This is a blind write, so
+	 * at SF11 or SF12 on BW125 the LDRO bit would stay clear here while the
+	 * node's read-modify-write turns it on -- and a one-bit disagreement in
+	 * ModemConfig3 makes two correctly configured radios unable to hear each
+	 * other. Second, AgcAutoOn (bit 2) is set here and is NOT set on the node,
+	 * which never writes this register except through setAutoLDO(): its reset
+	 * default is 0x00, so the node runs fixed max LNA gain from RegLna while the
+	 * station runs the AGC loop. That asymmetry favours the node at long range
+	 * and can saturate it at short range; it has never been measured. */
 	reg_write(REG_MODEM_CONFIG3, 0x04);
 
 	reg_write(REG_PREAMBLE_MSB, 0x00);
@@ -220,11 +230,19 @@ esp_err_t sx1278_init(void)
 	 * here (the LoRaWAN value) is the classic way to make two radios that
 	 * look correctly configured never hear each other. */
 
-	/* PA_BOOST at 20dBm and OCP 100mA, matching the node's POWER_20db /
-	 * overCurrentProtection = 100. 20dBm on PA_BOOST officially requires
-	 * RegPaDac high-power mode and a duty limit; the node has run this way
-	 * since the start, so the station matches it rather than introducing an
-	 * asymmetric link budget. */
+	/* PA_BOOST, MaxPower 7, OutputPower 15, and OCP at 100mA -- matching the
+	 * node's POWER_20db / overCurrentProtection = 100 register-for-register.
+	 *
+	 * THIS IS +17dBm, NOT +20dBm, despite the node's constant being named
+	 * POWER_20db. RegPaDac (0x4D) is left at its 0x84 reset value, and the
+	 * datasheet's +20dBm mode requires 0x87 plus OCP near 140mA (5.4.3). Both
+	 * ends are therefore consistent at 17dBm, which is the correct place to be:
+	 * +20dBm is limited to a 1% transmit duty cycle, and this station already
+	 * transmits 4.1% polling 20 nodes. Enabling it would run the PA out of
+	 * specification for 3dB, and an over-driven PA fails by cooking rather than
+	 * by complaining. See docs/lora-air-protocol.md "Power amplifier settings".
+	 * If more range is needed, raise the spreading factor -- 2.5dB per step, and
+	 * the budget tool in tools/lora_budget.c shows what each step costs. */
 	reg_write(REG_PA_CONFIG, 0xFF);
 	reg_write(REG_OCP, 0x20 | 11); /* 100mA: (I-45)/5 = 11 */
 

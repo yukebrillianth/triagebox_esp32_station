@@ -1,22 +1,36 @@
 menu "TriageBox Station"
 
+    config TB_STATION_NUM
+        int "Station number (1-20) -- CHANGE THIS PER BOARD"
+        range 1 20
+        default 1
+        help
+            The one value that must differ between two physical stations. It is
+            the source of every identity that collides silently:
+
+              LoRa radio address        = this number
+              static IP last octet      = 10 + this number  (.11, .12, .13, ...)
+              MQTT node id offset       = (this number - 1) * 20
+
+            Two boards flashed with the same number fight over the LoRa channel
+            and, with static addressing, over the same IP -- neither of which
+            produces an error message. Getting TB_STATION_ID wrong is loud by
+            comparison: the backend logs an unknown station and the dashboard
+            shows it as awaiting adoption.
+
+            Keep TB_STATION_ID in step with this by convention (num 3 -> st-03),
+            but the two are independent: the string is whatever the backend has
+            registered.
+
     config TB_STATION_ID
         string "Station ID (MQTT topic segment)"
         default "st-01"
         help
             Becomes {station_id} in triagebox/{station_id}/{node_id}/vital.
-            The backend drops packets from unregistered station IDs, so this
-            must match a seeded station. Demo seeds are st-01 and st-02.
-
-    config TB_STATION_ADDR
-        int "Station address on the LoRa link (1-254)"
-        range 1 254
-        default 1
-        help
-            The uint8 that goes in the poll packet's station_id field. This is
-            the radio address, NOT the MQTT topic segment above -- the backend
-            never sees it. Two stations sharing one channel must differ here,
-            or their nodes cannot tell whose poll they are answering.
+            The backend drops packets from unregistered station IDs, but the
+            station also publishes triagebox/{station_id}/announce on connect,
+            so an unregistered station shows up in the dashboard as awaiting
+            adoption rather than vanishing. Demo seeds are st-01 and st-02.
 
     config TB_NODE_COUNT
         int "Nodes to poll each cycle (1-20)"
@@ -28,9 +42,37 @@ menu "TriageBox Station"
             configured-but-absent node costs a full slot of dead air waiting
             for a reply that never comes.
 
+    config TB_ETH_STATIC_IP
+        bool "Use a static IP instead of DHCP"
+        default y
+        help
+            Static is the default because the deployment has no DHCP server: a
+            direct cable to a PC runs none, and neither does the unmanaged switch
+            that a multi-station field setup uses. Windows desktop cannot supply
+            one either -- the DHCP server role is Windows Server only, and
+            Internet Connection Sharing forces the fixed 192.168.137.x subnet.
+
+            The address is DERIVED from TB_STATION_NUM (see TB_ETH_SUBNET below),
+            not configured per board, so two stations cannot be flashed onto the
+            same address by forgetting a field. Turn this off only when plugging
+            into a router that does run DHCP.
+
+    config TB_ETH_SUBNET
+        string "Static subnet prefix (first three octets)"
+        depends on TB_ETH_STATIC_IP
+        default "192.168.50"
+        help
+            The station's address is <prefix>.(10 + TB_STATION_NUM), so station 1
+            is 192.168.50.11 and station 2 is .12. The gateway is <prefix>.1,
+            which is also where the broker runs on a direct-cable bench -- set
+            the PC's adapter to that address with mask 255.255.255.0.
+
+            No DNS is configured, so the broker URI must be an IP literal.
+            Offset 10 keeps the low addresses free for the PC and any switch.
+
     config TB_MQTT_URI
         string "MQTT broker URI"
-        default "mqtt://192.168.1.10:1883"
+        default "mqtt://192.168.50.1:1883"
         help
             Full URI including scheme and port, e.g. mqtt://host:1883.
 
@@ -41,36 +83,5 @@ menu "TriageBox Station"
     config TB_MQTT_PASSWORD
         string "MQTT password (empty for none)"
         default ""
-
-    config TB_ETH_STATIC_IP
-        bool "Use a static IP instead of DHCP"
-        default n
-        help
-            Required when the W5500 is cabled directly to a PC: a PC
-            Ethernet port runs no DHCP server, so the lease never arrives
-            and the link sits up forever with no address. Set the PC's
-            adapter to 192.168.50.1/255.255.255.0 to match the defaults
-            below. Leave this off when the station is plugged into a router.
-            No DNS is configured here, so the broker URI must be an IP
-            literal.
-
-    config TB_ETH_IP
-        string "Static IP address"
-        depends on TB_ETH_STATIC_IP
-        default "192.168.50.50"
-
-    config TB_ETH_NETMASK
-        string "Static netmask"
-        depends on TB_ETH_STATIC_IP
-        default "255.255.255.0"
-
-    config TB_ETH_GW
-        string "Static gateway"
-        depends on TB_ETH_STATIC_IP
-        default "192.168.50.1"
-        help
-            On a direct PC link there is no router, so this is just the
-            PC's address. Nothing routes through it -- station and broker
-            are on the same subnet -- but lwIP wants a value.
 
 endmenu

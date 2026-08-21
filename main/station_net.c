@@ -22,9 +22,19 @@
 
 static const char *TAG = "net";
 
+/* Bumped by hand; reported in the announce so the dashboard can show which
+ * firmware a station is running without a serial cable. */
+#define TB_FIRMWARE_VERSION "1.0.0"
+
 static esp_mqtt_client_handle_t s_mqtt;
 static volatile bool s_mqtt_up;
 static char s_lwt_topic[64];
+static char s_announce_topic[64];
+static char s_announce_json[192];
+/* Filled before mqtt_start(): the MAC in station_net_start(), the IP either
+ * derived from TB_STATION_NUM (static) or observed in got_ip_handler (DHCP). */
+static char s_mac_str[18] = "00:00:00:00:00:00";
+static char s_ip_str[16] = "0.0.0.0";
 
 /*
  * The station status topic carries JSON, NOT the bare strings ONLINE/OFFLINE.
@@ -52,6 +62,23 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base, int32_t id,
 		 * the current state instead of a stale OFFLINE. */
 		esp_mqtt_client_publish(s_mqtt, s_lwt_topic,
 					TB_STATUS_ONLINE_JSON, 0, 1, 1);
+		/*
+		 * Adoption announce. The ONE topic the backend accepts from an
+		 * unregistered station, and the reason an unknown station id is
+		 * now visible in the dashboard instead of being dropped with a
+		 * single warn line. It does NOT create a Station: the backend
+		 * records a PendingStation keyed on our MAC and an operator
+		 * adopts it, which is what keeps "MQTT never creates a device"
+		 * true.
+		 *
+		 * Retained, and republished on every reconnect. Both are
+		 * deliberate: retained so a dashboard opened an hour after boot
+		 * still sees the candidate, and repeated because an announce
+		 * whose station_id is already registered is ignored rather than
+		 * treated as an error.
+		 */
+		esp_mqtt_client_publish(s_mqtt, s_announce_topic, s_announce_json,
+					0, 1, 1);
 		break;
 	case MQTT_EVENT_DISCONNECTED:
 		s_mqtt_up = false;
@@ -73,6 +100,24 @@ static void mqtt_start(void)
 
 	snprintf(s_lwt_topic, sizeof(s_lwt_topic), "triagebox/%s/status",
 		 CONFIG_TB_STATION_ID);
+	snprintf(s_announce_topic, sizeof(s_announce_topic),
+		 "triagebox/%s/announce", CONFIG_TB_STATION_ID);
+
+	/*
+	 * Built once here rather than at publish time: MQTT_EVENT_CONNECTED runs
+	 * on the esp-mqtt task and fires again on every reconnect, so it must not
+	 * be doing string work or reading the netif.
+	 *
+	 * mac is the identity the backend keys the candidate on, because it is
+	 * the only field this station cannot change from its own configuration --
+	 * TB_STATION_ID, the IP and node_count are all just suggestions the
+	 * operator may override when adopting.
+	 */
+	snprintf(s_announce_json, sizeof(s_announce_json),
+		 "{\"station_id\":\"%s\",\"mac\":\"%s\",\"ip\":\"%s\","
+		 "\"firmware\":\"" TB_FIRMWARE_VERSION "\",\"node_count\":%d}",
+		 CONFIG_TB_STATION_ID, s_mac_str, s_ip_str, CONFIG_TB_NODE_COUNT);
+	ESP_LOGI(TAG, "announce: %s", s_announce_json);
 
 	/* The LWT is the whole point of the retained status topic: if this
 	 * station loses power, the broker publishes OFFLINE on its behalf.
@@ -134,6 +179,11 @@ static void got_ip_handler(void *arg, esp_event_base_t base, int32_t id,
 	(void) id;
 
 	const ip_event_got_ip_t *e = (const ip_event_got_ip_t *) data;
+
+	/* Recorded for the announce rather than read at publish time: with DHCP
+	 * this is the only place the address is known, and doing it here means the
+	 * static and DHCP paths feed the announce identically. */
+	snprintf(s_ip_str, sizeof(s_ip_str), IPSTR, IP2STR(&e->ip_info.ip));
 
 	ESP_LOGI(TAG, "eth up " IPSTR " gw " IPSTR, IP2STR(&e->ip_info.ip),
 		 IP2STR(&e->ip_info.gw));
@@ -265,6 +315,14 @@ esp_err_t station_net_start(void)
 	ESP_ERROR_CHECK(esp_read_mac(macaddr, ESP_MAC_ETH));
 	ESP_ERROR_CHECK(esp_eth_ioctl(eth, ETH_CMD_S_MAC_ADDR, macaddr));
 
+	/* Kept as a string for the adoption announce: the backend keys a pending
+	 * station on its MAC because it is the only identity this board cannot
+	 * change from its own configuration. */
+	snprintf(s_mac_str, sizeof(s_mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+		 macaddr[0], macaddr[1], macaddr[2], macaddr[3], macaddr[4],
+		 macaddr[5]);
+	ESP_LOGI(TAG, "station %d mac %s", CONFIG_TB_STATION_NUM, s_mac_str);
+
 	esp_netif_config_t netif_cfg = ESP_NETIF_DEFAULT_ETH();
 	esp_netif_t *netif = esp_netif_new(&netif_cfg);
 
@@ -280,15 +338,32 @@ esp_err_t station_net_start(void)
 		return dhcpc;
 	}
 
+	/*
+	 * DERIVED, NOT CONFIGURED. The address used to be its own Kconfig string
+	 * with a committed default of .50, so a second board flashed from this repo
+	 * silently claimed the first board's IP -- and an IP conflict announces
+	 * itself as ARP thrash and an MQTT link that connects and drops, never as an
+	 * error message. One number per board removes the whole class of mistake,
+	 * and the same number already had to be unique for the LoRa address.
+	 *
+	 * Offset 10 keeps .1 for the PC/broker and the low addresses for a switch.
+	 */
+	char ip_str[16];
+	char gw_str[16];
+
+	snprintf(ip_str, sizeof(ip_str), "%s.%d", CONFIG_TB_ETH_SUBNET,
+		 10 + CONFIG_TB_STATION_NUM);
+	snprintf(gw_str, sizeof(gw_str), "%s.1", CONFIG_TB_ETH_SUBNET);
+	snprintf(s_ip_str, sizeof(s_ip_str), "%s", ip_str);
+
 	esp_netif_ip_info_t ip = {
-		.ip.addr = esp_ip4addr_aton(CONFIG_TB_ETH_IP),
-		.netmask.addr = esp_ip4addr_aton(CONFIG_TB_ETH_NETMASK),
-		.gw.addr = esp_ip4addr_aton(CONFIG_TB_ETH_GW),
+		.ip.addr = esp_ip4addr_aton(ip_str),
+		.netmask.addr = esp_ip4addr_aton("255.255.255.0"),
+		.gw.addr = esp_ip4addr_aton(gw_str),
 	};
 
 	ESP_ERROR_CHECK(esp_netif_set_ip_info(netif, &ip));
-	ESP_LOGW(TAG, "static ip %s gw %s (dhcp off)", CONFIG_TB_ETH_IP,
-		 CONFIG_TB_ETH_GW);
+	ESP_LOGW(TAG, "static ip %s gw %s (dhcp off)", ip_str, gw_str);
 #endif
 
 	ESP_ERROR_CHECK(esp_netif_attach(netif, esp_eth_new_netif_glue(eth)));
@@ -318,9 +393,11 @@ esp_err_t station_net_publish(uint8_t node_id, const char *leaf,
 
 	char topic[80];
 
-	/* "node-%02u", zero-padded to two digits -- see station_net.h. */
+	/* "node-%02u", zero-padded, and shifted by TB_NODE_ID_OFFSET so a second
+	 * station does not claim the first station's ids -- see station_net.h. */
 	snprintf(topic, sizeof(topic), "triagebox/%s/node-%02u/%s",
-		 CONFIG_TB_STATION_ID, node_id, leaf);
+		 CONFIG_TB_STATION_ID, (unsigned) (node_id + TB_NODE_ID_OFFSET),
+		 leaf);
 
 	/* esp_mqtt_client_publish() copies the payload into the outbox before it
 	 * returns, so the caller's buffer may be a stack local. A negative

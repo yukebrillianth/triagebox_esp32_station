@@ -88,10 +88,18 @@ can be added later without a version bump on every deployed node.
 **Ignore a poll whose `version` differs.** That means one side has a stale copy of
 the header, and acting on a packet you cannot parse is worse than dropping it.
 
-`station_id` is a radio address (`CONFIG_TB_STATION_ADDR`, default 1) and is
-**not** the MQTT topic segment (`st-01`). The backend never sees it. A node may
-accept polls from any station, or filter on this field if two stations ever share
-a channel — the station does not care which, so this is the node's call.
+`station_id` is a radio address (`CONFIG_TB_STATION_NUM`, default 1) and is
+**not** the MQTT topic segment (`st-01`). The backend never sees it. The same
+number also derives the station's IP and its MQTT node id range, so it is the one
+value that must differ between two physical stations — see "One number per board"
+in `mqtt-contract.md`.
+
+A node may accept polls from any station, or filter on this field if two stations
+ever share a channel — the station does not care which, so this is the node's call.
+**Filtering becomes mandatory the moment two stations share a frequency**: without
+it both stations poll node 1, node 1 answers both, and the two replies collide and
+are lost with no error anywhere. Two channels (433 and 434 MHz — see "Channel
+plan") avoid the problem entirely, and are the reason filtering is still optional.
 
 ## Uplink: the reply (node → station, 18–38 bytes)
 
@@ -216,13 +224,100 @@ place for it to fail.
 
 ## Airtime budget
 
-At the settings above: a poll is ~30 ms, an empty vital ~51 ms, a vital with a
-20-character tag ~82 ms. A 20-node cycle is about 5 s of traffic inside a 15 s
-period, so the station transmits roughly 4% duty and each node well under 1% —
-comfortably under the 10% ceiling common on this band.
+At the settings above: a poll is ~31 ms, an empty vital ~51 ms, a vital with a
+20-character tag ~82 ms. Those figures are no longer hand-computed —
+`tools/lora_budget.c` derives them from the datasheet formulas and asserts them,
+so if they and this document ever disagree the tool fails to build:
+
+```
+cc -O2 -Wall -Wextra -o /tmp/tb_radio tools/lora_budget.c -lm && /tmp/tb_radio
+```
 
 Adding a field to `lora_poll_t` costs airtime 20 times per cycle. Weigh new
 downlink fields against that, not against the reply.
+
+### The slot is not airtime-bound, it is deadline-bound
+
+This is the single most useful number the tool produced, and it inverts the
+obvious conclusion.
+
+A 20-node cycle at SF7 is 5.6 s of the 15 s period, and the station transmits 4.1%
+duty while each node stays at 0.55% — all comfortable. But look at where one slot
+goes:
+
+| Component | ms | Share of the 237 ms the station must wait |
+| --- | --- | --- |
+| Reply airtime (tagged vital) | 82 | 35% |
+| Node reply deadline (`LORA_REPLY_DEADLINE_MS`) | 150 | 63% |
+| RX→TX mode switch | ~5 | 2% |
+
+**Two thirds of every slot is spent waiting for the node to notice a poll it has
+already received.** That 150 ms exists because the node checks DIO0 once per
+superloop pass and a PN532 scan blocks ~120 ms inside that pass — it is a firmware
+property, not a radio one. Which means the cheapest available range improvement is
+not a radio setting at all: shortening that deadline buys slot budget, and slot
+budget is what a higher spreading factor needs.
+
+Raising SF is what buys range: each step is 2.5 dB of receiver sensitivity, and
+2.5 dB at a ground-level path exponent of 3 is about 1.2× the distance.
+
+| Config | Sensitivity | Budget vs now | Range × (n=3) | Needs |
+| --- | --- | --- | --- | --- |
+| SF7/BW125 (now) | −124.5 dBm | — | 1.00 | fits, 237 ms slot |
+| SF9/BW250 | −126.5 dBm | +2.0 dB | 1.16 | node deadline ≤70 ms |
+| SF9/BW125 | −129.5 dBm | +5.0 dB | 1.47 | slot ~430 ms |
+| SF10/BW125 | −132.0 dBm | +7.5 dB | 1.78 | slot ~650 ms, 18 s cycle — **does not fit** |
+| SF12/BW125 | −137.0 dBm | +12.5 dB | 2.61 | 59 s cycle, 110% TX duty — **impossible** |
+
+Range multiples are relative, deliberately. Absolute distance at 433 MHz across a
+disaster site is set by Fresnel-zone obstruction and body absorption, not by any
+log-distance exponent, so an absolute number here would be fiction with three
+decimal places. Measure the real range once at SF7, then scale.
+
+The link budget shown is the **node → station** direction, which is the weaker one:
+the node's PA runs 17 dBm continuously while the station may use 20 dBm duty-cycled.
+Antenna gains (8 dBi station, 3 dBi node) apply in both directions and so do not
+affect which direction is limiting.
+
+### CR4/8 buys nothing here
+
+Raising the coding rate from 4/5 to 4/8 costs 45% more airtime and improves
+sensitivity by **0 dB** — it adds forward error correction, which helps against
+burst interference, not against a weak signal. On a quiet 433 MHz band with a
+polled protocol that already retries next cycle, that trade is not worth taking.
+CR4/5 stays.
+
+### Channel plan
+
+Two stations must not share a frequency: both would poll node 1 and its two
+replies would collide invisibly. Indonesian regulation allocates
+**433.05–434.79 MHz** for class-licensed short-range devices, and the node library
+takes frequency in whole MHz, so the usable channels are **433 and 434 MHz** —
+435 is outside the band. That caps a single site at two stations before a third
+would need narrower bandwidth (BW62.5 fits more channels at double the airtime) or
+the 920–923 MHz band.
+
+Confirm those band edges against a primary Komdigi source before relying on them
+for anything deployed; the figure here came from a secondary summary.
+
+## Power amplifier settings
+
+Both ends write `RegPaConfig = 0xFF`: PA_BOOST selected, MaxPower 7, OutputPower
+15. Neither writes `RegPaDac`.
+
+`RegPaDac` matters and is worth stating plainly. At its reset value (`0x84`) the
++20 dBm mode is **off**, so PA_BOOST tops out at **+17 dBm** regardless of what
+`RegPaConfig` says. Reaching +20 dBm needs `RegPaDac = 0x87` *and* the OCP raised
+to ~140 mA, and the datasheet then limits transmission to a **1% duty cycle** with
+VSWR under 3:1 (§5.4.3).
+
+So both radios currently run at 17 dBm with OCP at 100 mA, which is a coherent and
+correct configuration — just not the 20 dBm the comments claim. **Leave it that
+way.** The station's 4.1% TX duty already exceeds the 1% ceiling that +20 dBm
+requires, so enabling it would be operating the PA out of specification for 3 dB —
+about 1.26× range at n=3 — and the failure mode is a cooked amplifier, not a
+warning. The comments in `sx1278.c` and the node's `newLoRa()` are what need
+correcting, not the register values.
 
 ## What the station does with a missing reply
 

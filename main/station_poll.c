@@ -44,6 +44,24 @@ static uint32_t epoch_now(void)
 	return (t > 1600000000) ? (uint32_t) t : 0U;
 }
 
+/*
+ * Node status is published EVERY CYCLE, not only on transition.
+ *
+ * It used to be transition-only, which was cheaper and wrong in a way that only
+ * appears once vitals can be legitimately withheld. `lastSeen` on the backend is
+ * refreshed by a vital OR a node status, and a node is marked OFFLINE after
+ * NODE_OFFLINE_SEC (45s) without either. An unscored node publishes no vital (see
+ * poll_one), so with transition-only status the backend would mark it OFFLINE and
+ * the station would have no transition left to correct it -- s_online[] is still
+ * true, so nothing is ever published again. A live node answering every poll would
+ * look dead forever. The failing case is not hypothetical: a node whose MAX30102
+ * is dead never gets scored, so it never has a vital worth sending.
+ *
+ * One message per answering node per 15s: 20 nodes is 1.3 msg/s, which no broker
+ * notices. The bonus is that rssi/snr in the dashboard become current values
+ * rather than "whatever they were when the node came up", which is what makes the
+ * link-quality column worth looking at at all.
+ */
 static void publish_status_online(uint8_t node_id, const lora_vital_t *v,
 				  int rssi, float snr)
 {
@@ -70,15 +88,6 @@ static void publish_status_online(uint8_t node_id, const lora_vital_t *v,
 	station_net_publish(node_id, "status", json, 1, true);
 }
 
-/*
- * ponytail: node status is published on TRANSITION ONLY, not on a timer, so
- * rssi/snr are as old as the last online/offline change -- which on a healthy
- * link means "since boot". That is honest for liveness and stale for link
- * quality. If the dashboard wants a live RSSI trend, publish this every cycle
- * instead (one extra message per node per 15s, which the broker will not
- * notice); the reason it does not do so today is that a retained status
- * republished unchanged 4 times a minute is noise in every log that touches it.
- */
 static void mark_miss(uint8_t node_id)
 {
 	if (s_misses[node_id] < 0xFF) {
@@ -101,7 +110,7 @@ static void poll_one(uint8_t node_id)
 	const lora_poll_t p = {
 		.magic = LORA_POLL_MAGIC,
 		.version = LORA_POLL_VERSION,
-		.station_id = CONFIG_TB_STATION_ADDR,
+		.station_id = CONFIG_TB_STATION_NUM,
 		.node_id = node_id,
 		.command = LORA_POLL_CMD_REPORT,
 	};
@@ -171,7 +180,27 @@ static void poll_one(uint8_t node_id)
 		s_online[node_id] = true;
 		ESP_LOGI(TAG, "node %u online (rssi %d snr %.1f)", node_id, rssi,
 			 snr);
-		publish_status_online(node_id, v, rssi, snr);
+	}
+	/* Every cycle, not just on the transition -- see publish_status_online.
+	 * This is also the only thing keeping an unscored node from being marked
+	 * OFFLINE by the backend while it is answering every poll. */
+	publish_status_online(node_id, v, rssi, snr);
+
+	/*
+	 * A vital with no priority has nothing to say: priority drives the triage
+	 * board, the KPIs and the alerts, and it is the one field the backend still
+	 * requires. lora_vital.h already says the station must omit priority and
+	 * confidence when it sees 0xFF; the rule that follows from that is that the
+	 * whole packet is not worth publishing.
+	 *
+	 * Only the vital is withheld. The status publish above already ran, so the
+	 * node stays ONLINE with fresh rssi/snr -- it answered, it is alive, it just
+	 * has no triage decision yet. Normal for the first cycles after boot, and
+	 * permanent for a node whose PPG sensor is dead.
+	 */
+	if (lora_vital_priority_name(v->priority) == NULL) {
+		ESP_LOGD(TAG, "node %u unscored, vital withheld", node_id);
+		return;
 	}
 
 	char json[TB_VITAL_JSON_MAX];
@@ -242,8 +271,13 @@ esp_err_t station_poll_start(void)
 		return ESP_ERR_NO_MEM;
 	}
 
-	ESP_LOGI(TAG, "polling nodes 1..%d every %ums, station addr %d",
-		 CONFIG_TB_NODE_COUNT, LORA_POLL_PERIOD_MS,
-		 CONFIG_TB_STATION_ADDR);
+	/* Both id spaces logged together: they are easy to confuse and a mismatch
+	 * between the MQTT range here and the nodeIdBase used at adoption is
+	 * undetectable at runtime -- the packets just stop arriving. */
+	ESP_LOGI(TAG,
+		 "polling radio 1..%d every %ums as station %d -> mqtt node-%02u..node-%02u",
+		 CONFIG_TB_NODE_COUNT, LORA_POLL_PERIOD_MS, CONFIG_TB_STATION_NUM,
+		 (unsigned) (1 + TB_NODE_ID_OFFSET),
+		 (unsigned) (CONFIG_TB_NODE_COUNT + TB_NODE_ID_OFFSET));
 	return ESP_OK;
 }

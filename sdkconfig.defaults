@@ -27,19 +27,29 @@ CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 # never connects", nowhere near the cause. Anything that must not evaporate
 # belongs here rather than only in menuconfig.
 #
+# ####################################################################
+# CHANGE TB_STATION_NUM PER PHYSICAL BOARD. It is the source of the LoRa
+# address, the static IP (192.168.50.{10+num}) and the MQTT node id range
+# ((num-1)*20). Two boards left at 1 fight over the radio channel AND the
+# IP address, and neither collision produces an error message -- see the
+# Kconfig help. This is the only value that must differ.
+# ####################################################################
+CONFIG_TB_STATION_NUM=1
+CONFIG_TB_STATION_ID="st-01"
+
 # 20 nodes is the proof-of-concept target, so the station polls the full cycle
 # even while fewer boards exist: absent nodes cost a slot of dead air each and
 # publish a retained OFFLINE after ~45s, but node 1's cadence is unaffected
 # (the cycle is paced by LORA_POLL_PERIOD_MS, not by the node count).
 CONFIG_TB_NODE_COUNT=20
 
-# Direct Ethernet cable to the PC: no DHCP server, no gateway, no DNS. The
-# gateway address is the PC and is also where Mosquitto listens, which is why
-# the broker URI is the same host.
+# Direct Ethernet cable to the PC, or an unmanaged switch for several stations:
+# no DHCP server either way, and Windows desktop cannot provide one (that role
+# is Windows Server only). The address is derived from TB_STATION_NUM, so there
+# is no per-board IP to forget. The gateway (.1) is the PC, which is also where
+# Mosquitto listens -- hence the matching broker URI.
 CONFIG_TB_ETH_STATIC_IP=y
-CONFIG_TB_ETH_IP="192.168.50.50"
-CONFIG_TB_ETH_NETMASK="255.255.255.0"
-CONFIG_TB_ETH_GW="192.168.50.1"
+CONFIG_TB_ETH_SUBNET="192.168.50"
 CONFIG_TB_MQTT_URI="mqtt://192.168.50.1:1883"
 
 # CONFIG_TB_MQTT_USERNAME / _PASSWORD are deliberately absent: this file is
