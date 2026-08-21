@@ -304,6 +304,122 @@ int main(void)
 	       "cycle is then 6.4s of 15s -- still comfortable.\n\n");
 
 	/*
+	 * THE ANSWER DEPENDS ON HOW MANY NODES THERE ARE, and that is the part the
+	 * fixed 20-node table above hides.
+	 *
+	 * Two independent ceilings, and which one binds changes with the node count:
+	 *
+	 *   slot   the cycle is N slots long, so the per-node budget is PERIOD/N.
+	 *          At 2 nodes that is 7.5s and the radio can afford settings that
+	 *          are absurd at 20.
+	 *   duty   the station transmits N polls per period, and TX duty is a
+	 *          regulatory and thermal limit that does NOT relax with fewer
+	 *          nodes -- a 5-byte poll at SF12 is 827ms of airtime, so three
+	 *          nodes alone put the station over 10%.
+	 *
+	 * Deploying one firmware to a 2-node bench and a 20-node site therefore
+	 * leaves range on the table in the first case and breaks cadence in the
+	 * second, which is why this is a table and not a single answer.
+	 *
+	 * The slot ceiling is 70% of the period, leaving headroom for a cycle that
+	 * overruns: xTaskDelayUntil() returns immediately when it does, so the
+	 * degradation is a slower cycle rather than a broken one, but a cycle that
+	 * routinely overruns makes the MQTT cadence wander.
+	 *
+	 * ponytail: the 10% duty ceiling is the figure commonly cited for this band
+	 * and is NOT confirmed against Indonesian regulation -- see the channel plan
+	 * note in docs/lora-air-protocol.md. Treat it as the number to check, not as
+	 * the number to trust.
+	 */
+#define DUTY_CEILING_PCT 10.0
+
+	printf("--- largest usable SF per node count (BW125, CR4/5) ---\n");
+	printf("slot ceiling 70%% of a %ums period; TX duty ceiling %.0f%% "
+	       "(UNVERIFIED for ID -- see docs)\n\n",
+	       PERIOD_MS, DUTY_CEILING_PCT);
+	printf("%6s %10s  %7s  %7s  %8s  %6s  %s\n", "nodes", "slot avail", "best SF",
+	       "cycle", "TX duty", "range", "limited by");
+	static const unsigned counts[] = { 1, 2, 3, 5, 10, 15, 20 };
+
+	for (size_t i = 0; i < sizeof(counts) / sizeof(counts[0]); i++) {
+		unsigned n = counts[i];
+		double budget_ms = PERIOD_MS * 0.7 / n;
+		unsigned best = 0;
+		const char *bound = "-";
+		struct cfg pick = { "", 7, 125.0, 1, 8 };
+
+		for (unsigned sf = 12; sf >= 7; sf--) {
+			struct cfg t = { "", sf, 125.0, 1, 8 };
+			double duty = n
+				      * time_on_air_ms(sf, 125000.0, 1, POLL_BYTES, 8, 1, 0)
+				      / (double) PERIOD_MS * 100.0;
+			int slot_ok = slot_cost_ms(&t) <= budget_ms;
+			int duty_ok = duty <= DUTY_CEILING_PCT;
+
+			if (slot_ok && duty_ok) {
+				best = sf;
+				pick = t;
+				/* Which ceiling stopped us going one step further. */
+				struct cfg up = { "", sf + 1, 125.0, 1, 8 };
+				double up_duty = n
+						 * time_on_air_ms(sf + 1, 125000.0, 1,
+								  POLL_BYTES, 8, 1, 0)
+						 / (double) PERIOD_MS * 100.0;
+				if (sf == 12) {
+					bound = "SF12 max";
+				} else if (up_duty > DUTY_CEILING_PCT) {
+					bound = "TX duty";
+				} else if (slot_cost_ms(&up) > budget_ms) {
+					bound = "slot";
+				}
+				break;
+			}
+		}
+		if (best == 0) {
+			printf("%6u %8.0f ms  %7s  %7s  %8s  %6s  nothing fits\n", n,
+			       budget_ms, "-", "-", "-", "-");
+			continue;
+		}
+		double cycle = n * slot_cost_ms(&pick);
+		double duty = n * time_on_air_ms(best, 125000.0, 1, POLL_BYTES, 8, 1, 0)
+			      / (double) PERIOD_MS * 100.0;
+		double budget = max_path_loss_db(17.0, best, 125000.0);
+
+		printf("%6u %8.0f ms  %7u  %5.1f s  %6.2f%%  x%-5.2f %s\n", n, budget_ms,
+		       best, cycle / 1000.0, duty,
+		       range_multiple(budget, ref, 3.0), bound);
+	}
+	printf("\nFewer nodes buy range, but TX duty -- not the slot -- is what binds\n"
+	       "below ~10 nodes: a 5-byte poll at SF12 is 827ms of airtime.\n");
+	printf("Raising SF also means raising LORA_POLL_SLOT_MS to the 'slot avail'\n"
+	       "figure, on BOTH firmwares, or every reply arrives after the timeout.\n\n");
+
+	/*
+	 * The concrete change, spelled out, because "raise the spreading factor" is
+	 * not actionable and every constant below has a matching one in the node.
+	 */
+	printf("--- the one-step change, if the 20-node target is real ---\n");
+	for (unsigned sf = 7; sf <= 9; sf++) {
+		double poll = time_on_air_ms(sf, 125000.0, 1, POLL_BYTES, 8, 1, 0);
+		double vmax = time_on_air_ms(sf, 125000.0, 1, VITAL_MAX_BYTES, 8, 1, 0);
+		double timeout = NODE_REPLY_DEADLINE_MS + NODE_RX_TX_SWITCH_MS + vmax;
+		double slot = ceil(timeout / 10.0) * 10.0;
+		double budget = max_path_loss_db(17.0, sf, 125000.0);
+
+		printf("  SF%u  SLOT_MS %4.0f  REPLY_AIRTIME_MS %4.0f  20-node cycle %4.1f s"
+		       "  duty %5.2f%%  range x%.2f%s\n",
+		       sf, slot, ceil(vmax / 10.0) * 10.0,
+		       20.0 * (poll + slot) / 1000.0, 20.0 * poll / PERIOD_MS * 100.0,
+		       range_multiple(budget, ref, 3.0),
+		       sf == 7 ? "   <- now" : "");
+	}
+	printf("\n  SF8 is the free one: +2.5dB for 1.8s more cycle and 8.3%% duty.\n");
+	printf("  SF9 at 20 nodes is 16.5%% TX duty -- over any plausible ceiling.\n");
+	printf("  Constants to change together: LORA_POLL_SLOT_MS (lora_poll.h, both\n");
+	printf("  repos), LORA_REPLY_AIRTIME_MS (node main.c, feeds its static assert),\n");
+	printf("  and SPREADING_FACTOR in sx1278.c + newLoRa() in the node's LoRa.c.\n\n");
+
+	/*
 	 * The documented airtime figures must keep coming out of these formulas.
 	 * They are quoted in docs/lora-air-protocol.md and in lora_vital.h's
 	 * airtime rationale, and a slot budget derived from a wrong number is the
