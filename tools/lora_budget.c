@@ -420,6 +420,53 @@ int main(void)
 	printf("  and SPREADING_FACTOR in sx1278.c + newLoRa() in the node's LoRa.c.\n\n");
 
 	/*
+	 * TWO STATIONS ON ONE CHANNEL, which is the question that gets asked because
+	 * changing frequency sounds harder than it is.
+	 *
+	 * The nodes make it worse than a plain collision problem: lora_poll_for_me()
+	 * does not check station_id, so a node answers polls from EITHER station, and
+	 * both stations poll radio addresses starting at 1. Station B therefore
+	 * publishes station A's node 1 under its own id range -- one patient's vitals
+	 * filed against another patient's record, which is the worst failure this
+	 * system has.
+	 *
+	 * Even with that fixed (a station_id check on the node), the channel is still
+	 * shared. Station A listens for 250ms after each 31ms poll, and anything
+	 * station B or B's nodes transmit inside that window destroys A's reply. The
+	 * arithmetic below is the standard unslotted-collision estimate: B's
+	 * transmissions are effectively random relative to A's slots, so the expected
+	 * number of overlaps is B's transmission count times the vulnerable window,
+	 * over the period.
+	 */
+	printf("--- two stations sharing one channel, %u nodes each (SF7) ---\n", NODES);
+	{
+		double poll = time_on_air_ms(7, 125000.0, 1, POLL_BYTES, 8, 1, 0);
+		double vmax = time_on_air_ms(7, 125000.0, 1, VITAL_MAX_BYTES, 8, 1, 0);
+		double timeout = NODE_REPLY_DEADLINE_MS + NODE_RX_TX_SWITCH_MS + vmax;
+		/* A's vulnerable window per slot: its own poll plus the listen window. */
+		double window = poll + timeout;
+		/* B's transmissions per period: N polls from the station, N replies from
+		 * its nodes. Each is vulnerable-window + its own length wide. */
+		double lambda = NODES * (poll + window) / (double) PERIOD_MS
+				+ NODES * (vmax + window) / (double) PERIOD_MS;
+		double p_collide = 1.0 - exp(-lambda);
+
+		printf("  A's vulnerable window per slot : %.0f ms (poll %.0f + listen %.0f)\n",
+		       window, poll, timeout);
+		printf("  B's transmissions per period   : %u polls + %u replies\n", NODES,
+		       NODES);
+		printf("  expected overlaps per slot     : %.2f\n", lambda);
+		printf("  P(slot corrupted)              : %.0f%%\n", p_collide * 100.0);
+		printf("\n  So sharing 433MHz between two %u-node stations loses roughly\n",
+		       NODES);
+		printf("  half the readings, and loses them invisibly -- a collided frame\n");
+		printf("  fails CRC and is counted as a miss, identical to a dead node.\n");
+		printf("  Two channels (433 and 434 MHz) remove the problem entirely.\n");
+		printf("  A different sync word does NOT: it filters after demodulation,\n");
+		printf("  so it fixes attribution and not collisions.\n\n");
+	}
+
+	/*
 	 * The documented airtime figures must keep coming out of these formulas.
 	 * They are quoted in docs/lora-air-protocol.md and in lora_vital.h's
 	 * airtime rationale, and a slot budget derived from a wrong number is the

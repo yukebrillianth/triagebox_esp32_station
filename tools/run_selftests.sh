@@ -11,6 +11,9 @@
 #                   is too short fails as a timeout indistinguishable from a dead
 #                   node, so the numbers behind it are asserted rather than
 #                   remembered.
+# battery_budget -- runtime per pack, and the gap between the datasheet estimate
+#                   and the load the 11-hour proposal claim implies. Prints the
+#                   disagreement rather than picking a favourite.
 set -e
 
 cd "$(dirname "$0")/.."
@@ -26,6 +29,11 @@ echo
 echo "=== lora_budget ==="
 $CC -O2 -Wall -Wextra -o "$OUT/budget" tools/lora_budget.c -lm
 "$OUT/budget"
+
+echo
+echo "=== battery_budget ==="
+$CC -O2 -Wall -Wextra -o "$OUT/batt" tools/battery_budget.c -lm
+"$OUT/batt"
 
 echo
 echo "all station self-checks passed"
