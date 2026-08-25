@@ -131,11 +131,12 @@ angka okupansi itu yang menunjukkan sistemnya belum jenuh.
 - Diturunkan dari klaim 11 jam pada 2× 18650: beban ~546 mA
 - Dijumlahkan dari datasheet tiap rail: ~266 mA
 
-Salah satu dari tiga hal ini benar, dan hanya multimeter yang bisa memutuskan:
+Salah satu dari tiga hal ini benar, dan hanya pengukuran yang bisa memutuskan:
 bebannya memang ~546 mA dan estimasi ini kelewat rendah; klaim 11 jam terlalu
 konservatif; atau 11 jam belum pernah diukur.
 
-**Jangan taruh salah satu tabel itu di slide.** Ukur dulu.
+**Jangan taruh salah satu tabel itu di slide.** Ukur dulu — dan node sudah punya
+alat ukurnya di dalam, lihat "Alat ukur yang sudah ada di dalam node" di bawah.
 
 ### Prosedur
 
@@ -153,6 +154,31 @@ dengan baterai. Yang dicari **arus rata-rata**, bukan puncak.
 
 Uji tuntas (kalau ada waktu): nyalakan sampai mati sendiri, catat jamnya. Satu
 angka terukur mengalahkan tabel perhitungan mana pun.
+
+### Alat ukur yang sudah ada di dalam node
+
+Tidak perlu multimeter untuk semuanya — PMIC SW6106 di node **sudah mengukur arus
+sisi baterai sendiri**, dan itu justru angka yang dicari: semua beban (ESP32, LCD,
+STM32, sensor, LoRa) lewat satu jalur itu.
+
+Dua cara membacanya:
+
+- **Serial, per detik:** perintah `pmic [samples] [period_ms]` di konsol debug ESP32
+  mencetak SoC, Vbat, Vout, Ichg, **Idischg**, dan Tdie. `Idischg` adalah arusnya.
+  Ini yang dipakai untuk uji langkah 3 di atas — jalankan sambil menyalakan dan
+  mematikan backlight, dan selisihnya langsung terbaca tanpa menyentuh kabel.
+- **Dashboard, per 15 detik:** persen baterai tiap node ikut di setiap siklus poll
+  (kolom baterai di halaman Perangkat). Untuk uji tuntas berjam-jam ini lebih
+  praktis daripada mengawasi serial — tinggal catat jam saat tiap node melewati
+  80/60/40/20%, dan kemiringan grafiknya adalah runtime-nya.
+
+Karena `Idischg` diukur di sisi baterai, arus di rail 5 V kira-kira
+`Idischg × Vbat/5 V` dikurangi rugi boost — jangan dibandingkan langsung dengan
+angka yang diukur di 5 V.
+
+Yang **tetap** butuh alat luar: memverifikasi PMIC-nya sendiri. Ukur sekali dengan
+multimeter dan bandingkan dengan `Idischg`; kalau cocok, sisa pengujian bisa
+seluruhnya dari `pmic` dan dashboard.
 
 ### Yang sudah pasti dari perhitungan
 

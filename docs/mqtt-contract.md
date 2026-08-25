@@ -249,8 +249,13 @@ measurement to report for a node that is not answering, and a last-known RSSI on
 an offline node reads as current.
 
 RSSI and SNR are properties of the radio hop and are measured by the station's
-receiver, so they belong here and never on the vital. `battery` is absent when
-the node has no fuel gauge, which is the case on all current hardware.
+receiver, so they belong here and never on the vital.
+
+`battery` is a real reading: the node's SW6106 PMIC has a fuel gauge, read over
+the node's internal I²C link. It is absent only when that read has not happened
+yet (the first seconds after a node boots) or failed, which is deliberate — the
+node reports "no reading" rather than freezing the last good percentage, because a
+stuck 80% while a pack drains is worse than a blank cell for one cycle.
 
 Both are retained, because node liveness is state rather than an event.
 

@@ -8,15 +8,19 @@
  * of two 18650s -- so the claim does not survive the change unless the load also
  * drops. That is worth knowing before it appears on a slide.
  *
- * WHAT THIS IS NOT. It does not know the node's actual current draw, because
- * nobody has measured it. Every per-rail figure below is a DATASHEET TYPICAL,
- * which is reliably wrong in the optimistic direction: it excludes regulator
- * loss, LED brightness, and whatever the display backlight is set to. The
- * structure is what is useful -- measure one number (average current at the
- * battery terminals) and this converts it to runtime honestly.
+ * WHAT THIS IS NOT. It does not know the node's actual current draw. Every
+ * per-rail figure below is a DATASHEET TYPICAL, which is reliably wrong in the
+ * optimistic direction: it excludes regulator loss, LED brightness, and whatever
+ * the display backlight is set to. The structure is what is useful -- measure one
+ * number (average current at the battery terminals) and this converts it to
+ * runtime honestly.
  *
- * Run it, then run the measurement in docs/pengujian-lapangan.md, then put the
- * MEASURED row on the slide and delete the estimate.
+ * AND THAT NUMBER IS MEASURABLE WITHOUT A MULTIMETER. The node's SW6106 PMIC
+ * reports discharge current on the battery side, which is exactly the figure this
+ * file estimates: `pmic` on the ESP32 debug console prints it, and the same chip's
+ * fuel gauge now reaches the dashboard on every poll. Run it, then run the
+ * procedure in docs/pengujian-lapangan.md, then put the MEASURED row on the slide
+ * and delete the estimate.
  */
 #include <assert.h>
 #include <math.h>
@@ -160,7 +164,9 @@ int main(void)
 	printf("    c) the 11-hour figure was never measured at all.\n\n");
 	printf("  DO NOT put either table on a slide. Measure the average current at the\n");
 	printf("  battery terminals over 10 minutes of normal operation (procedure in\n");
-	printf("  docs/pengujian-lapangan.md), then quote one number with its method.\n\n");
+	printf("  docs/pengujian-lapangan.md), then quote one number with its method.\n");
+	printf("  The node's SW6106 PMIC measures that current itself -- `pmic` on the\n");
+	printf("  ESP32 console prints Idischg, no meter needed to get started.\n\n");
 
 	printf("=== What actually buys runtime here ===\n\n");
 	struct { const char *what; double saved_ma; } wins[] = {
