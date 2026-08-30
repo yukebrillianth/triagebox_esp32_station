@@ -14,6 +14,10 @@
 #include "sx1278.h"
 #include "tb_vital_json.h"
 
+#ifndef CONFIG_TB_POLL_PERIOD_MS
+#define CONFIG_TB_POLL_PERIOD_MS LORA_POLL_PERIOD_MS
+#endif
+
 static const char *TAG = "poll";
 
 /* Kconfig already bounds this 1..20; the assert is here because the bound that
@@ -247,8 +251,14 @@ static void poll_task(void *arg)
 		 * with how many nodes answered, or the MQTT cadence wanders and
 		 * two stations that were interleaved slowly collide. If a cycle
 		 * overran the period this returns immediately, which is the
-		 * right degradation -- keep polling, just slower. */
-		xTaskDelayUntil(&cycle, pdMS_TO_TICKS(LORA_POLL_PERIOD_MS));
+		 * right degradation -- keep polling, just slower.
+		 *
+		 * Sourced from Kconfig CONFIG_TB_POLL_PERIOD_MS (default 15000) so a
+		 * range test can raise the cadence without editing a shared header --
+		 * lora_poll.h is copied verbatim into the node project, so changing
+		 * LORA_POLL_PERIOD_MS there would force both firmwares to be reflashed
+		 * together for a station-only experiment. */
+		xTaskDelayUntil(&cycle, pdMS_TO_TICKS(CONFIG_TB_POLL_PERIOD_MS));
 	}
 }
 
@@ -276,7 +286,8 @@ esp_err_t station_poll_start(void)
 	 * undetectable at runtime -- the packets just stop arriving. */
 	ESP_LOGI(TAG,
 		 "polling radio 1..%d every %ums as station %d -> mqtt node-%02u..node-%02u",
-		 CONFIG_TB_NODE_COUNT, LORA_POLL_PERIOD_MS, CONFIG_TB_STATION_NUM,
+		 CONFIG_TB_NODE_COUNT, CONFIG_TB_POLL_PERIOD_MS,
+		 CONFIG_TB_STATION_NUM,
 		 (unsigned) (1 + TB_NODE_ID_OFFSET),
 		 (unsigned) (CONFIG_TB_NODE_COUNT + TB_NODE_ID_OFFSET));
 	return ESP_OK;
