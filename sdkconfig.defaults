@@ -41,7 +41,9 @@ CONFIG_TB_STATION_ID="st-01"
 # even while fewer boards exist: absent nodes cost a slot of dead air each and
 # publish a retained OFFLINE after ~45s, but node 1's cadence is unaffected
 # (the cycle is paced by LORA_POLL_PERIOD_MS, not by the node count).
-CONFIG_TB_NODE_COUNT=20
+CONFIG_TB_NODE_COUNT=1
+CONFIG_TB_POLL_PERIOD_MS=3000
+CONFIG_TB_POLL_LOG_EVERY=y
 
 # Direct Ethernet cable to the PC, or an unmanaged switch for several stations:
 # no DHCP server either way, and Windows desktop cannot provide one (that role

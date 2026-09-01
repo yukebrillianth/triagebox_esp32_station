@@ -69,6 +69,23 @@ menu "TriageBox Station"
             configured-but-absent node costs a full slot of dead air waiting
             for a reply that never comes.
 
+    config TB_POLL_LOG_EVERY
+        bool "Log every poll verdict (range testing)"
+        default n
+        help
+            One INFO line per poll: "node N OK rssi .. snr .." or
+            "node N MISS". This is the packet-level record a walking range
+            test needs -- PDR is OK-lines divided by total lines per segment
+            of the walk, and the rssi/snr in the line is the uplink quality
+            measured by the station, which the node's own Test screen cannot
+            see. At one node and a 2-3s period this is a readable verdict
+            every few metres.
+
+            Leave it OFF for deployment: 20 nodes at 15000ms would emit ~1.3
+            lines per second even when everything is healthy, burying the
+            online/offline transitions and MQTT warnings that matter. With
+            the flag off, poll behaviour is exactly as before -- silent.
+
     config TB_ETH_STATIC_IP
         bool "Use a static IP instead of DHCP"
         default y

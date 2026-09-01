@@ -164,7 +164,6 @@ static void eth_event_handler(void *arg, esp_event_base_t base, int32_t id,
 		break;
 	case ETHERNET_EVENT_DISCONNECTED:
 		ESP_LOGW(TAG, "eth link down");
-		s_mqtt_up = false;
 		break;
 	default:
 		break;
