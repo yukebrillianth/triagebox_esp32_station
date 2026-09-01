@@ -14,6 +14,10 @@
 #include "sx1278.h"
 #include "tb_vital_json.h"
 
+#ifndef CONFIG_TB_POLL_PERIOD_MS
+#define CONFIG_TB_POLL_PERIOD_MS LORA_POLL_PERIOD_MS
+#endif
+
 static const char *TAG = "poll";
 
 /* Kconfig already bounds this 1..20; the assert is here because the bound that
@@ -140,7 +144,10 @@ static void poll_one(uint8_t node_id)
 			     &snr);
 
 	if (err == ESP_ERR_TIMEOUT) {
-		mark_miss(node_id); /* expected for an absent node; not logged */
+		mark_miss(node_id); /* expected for an absent node */
+#if CONFIG_TB_POLL_LOG_EVERY
+		ESP_LOGI(TAG, "node %u MISS", node_id);
+#endif
 		return;
 	}
 	if (err != ESP_OK) {
@@ -149,6 +156,9 @@ static void poll_one(uint8_t node_id)
 		 * in the log because it is the one that antenna work fixes. */
 		ESP_LOGW(TAG, "rx node %u: %s", node_id, esp_err_to_name(err));
 		mark_miss(node_id);
+#if CONFIG_TB_POLL_LOG_EVERY
+		ESP_LOGI(TAG, "node %u MISS (%s)", node_id, esp_err_to_name(err));
+#endif
 		return;
 	}
 
@@ -181,6 +191,9 @@ static void poll_one(uint8_t node_id)
 		ESP_LOGI(TAG, "node %u online (rssi %d snr %.1f)", node_id, rssi,
 			 snr);
 	}
+#if CONFIG_TB_POLL_LOG_EVERY
+	ESP_LOGI(TAG, "node %u OK rssi %d snr %.1f", node_id, rssi, snr);
+#endif
 	/* Every cycle, not just on the transition -- see publish_status_online.
 	 * This is also the only thing keeping an unscored node from being marked
 	 * OFFLINE by the backend while it is answering every poll. */
@@ -247,8 +260,14 @@ static void poll_task(void *arg)
 		 * with how many nodes answered, or the MQTT cadence wanders and
 		 * two stations that were interleaved slowly collide. If a cycle
 		 * overran the period this returns immediately, which is the
-		 * right degradation -- keep polling, just slower. */
-		xTaskDelayUntil(&cycle, pdMS_TO_TICKS(LORA_POLL_PERIOD_MS));
+		 * right degradation -- keep polling, just slower.
+		 *
+		 * Sourced from Kconfig CONFIG_TB_POLL_PERIOD_MS (default 15000) so a
+		 * range test can raise the cadence without editing a shared header --
+		 * lora_poll.h is copied verbatim into the node project, so changing
+		 * LORA_POLL_PERIOD_MS there would force both firmwares to be reflashed
+		 * together for a station-only experiment. */
+		xTaskDelayUntil(&cycle, pdMS_TO_TICKS(CONFIG_TB_POLL_PERIOD_MS));
 	}
 }
 
@@ -276,8 +295,22 @@ esp_err_t station_poll_start(void)
 	 * undetectable at runtime -- the packets just stop arriving. */
 	ESP_LOGI(TAG,
 		 "polling radio 1..%d every %ums as station %d -> mqtt node-%02u..node-%02u",
-		 CONFIG_TB_NODE_COUNT, LORA_POLL_PERIOD_MS, CONFIG_TB_STATION_NUM,
+		 CONFIG_TB_NODE_COUNT, (unsigned) CONFIG_TB_POLL_PERIOD_MS,
+		 CONFIG_TB_STATION_NUM,
 		 (unsigned) (1 + TB_NODE_ID_OFFSET),
 		 (unsigned) (CONFIG_TB_NODE_COUNT + TB_NODE_ID_OFFSET));
+
+	/* Make the period knob's real floor loud: a cycle cannot run faster than
+	 * NODE_COUNT slots, and an absent node burns its full slot (250ms timeout),
+	 * so e.g. 20 nodes x 281ms = 5.6s regardless of a 2000ms setting. */
+	const unsigned cycle_floor_ms =
+		(unsigned) CONFIG_TB_NODE_COUNT * (LORA_POLL_SLOT_MS + 31U);
+	if (cycle_floor_ms > (unsigned) CONFIG_TB_POLL_PERIOD_MS) {
+		ESP_LOGW(TAG,
+			 "period %ums is under the floor: %d node(s) need ~%ums per cycle -- "
+			 "lowering the setting will do nothing (fix: TB_NODE_COUNT)",
+			 (unsigned) CONFIG_TB_POLL_PERIOD_MS, CONFIG_TB_NODE_COUNT,
+			 cycle_floor_ms);
+	}
 	return ESP_OK;
 }

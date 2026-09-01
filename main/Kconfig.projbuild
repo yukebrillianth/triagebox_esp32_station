@@ -32,6 +32,33 @@ menu "TriageBox Station"
             so an unregistered station shows up in the dashboard as awaiting
             adoption rather than vanishing. Demo seeds are st-01 and st-02.
 
+    config TB_POLL_PERIOD_MS
+        int "LoRa poll cycle period (ms)"
+        range 1000 60000
+        default 15000
+        help
+            One full cycle: the station polls nodes 1..TB_NODE_COUNT, then waits
+            until this much time has passed since the cycle STARTED. 15000 is
+            the deployment value and matches the nominal MQTT vital cadence
+            one-for-one, so the station publishes exactly what it polls with no
+            decimation anywhere.
+
+            LOWER IT ONLY FOR A RANGE TEST, and know what you are trading. With
+            one node the floor is a single slot (LORA_POLL_SLOT_MS, 250ms), so
+            2000-3000 is comfortable and gives a walking operator a fresh
+            success/miss verdict every few metres instead of every 15 seconds --
+            at 15000 you cover 50m between data points and cannot tell where the
+            link actually died.
+
+            What it costs: airtime duty cycle scales inversely. A 5-byte poll is
+            ~30ms of air, so 20 nodes at 15000 is ~4% duty, under the 10%
+            ceiling common on this band. The same 20 nodes at 3000 would be ~20%
+            and is NOT legal to leave running -- with 20 nodes do not go below
+            8000. The 1000 floor exists for single-node bench work only.
+
+            Set it back to 15000 before deploying. Nothing enforces this at
+            runtime; the station logs the value it is using at startup.
+
     config TB_NODE_COUNT
         int "Nodes to poll each cycle (1-20)"
         range 1 20
@@ -41,6 +68,23 @@ menu "TriageBox Station"
             Keep this at the number of nodes that actually exist: every
             configured-but-absent node costs a full slot of dead air waiting
             for a reply that never comes.
+
+    config TB_POLL_LOG_EVERY
+        bool "Log every poll verdict (range testing)"
+        default n
+        help
+            One INFO line per poll: "node N OK rssi .. snr .." or
+            "node N MISS". This is the packet-level record a walking range
+            test needs -- PDR is OK-lines divided by total lines per segment
+            of the walk, and the rssi/snr in the line is the uplink quality
+            measured by the station, which the node's own Test screen cannot
+            see. At one node and a 2-3s period this is a readable verdict
+            every few metres.
+
+            Leave it OFF for deployment: 20 nodes at 15000ms would emit ~1.3
+            lines per second even when everything is healthy, burying the
+            online/offline transitions and MQTT warnings that matter. With
+            the flag off, poll behaviour is exactly as before -- silent.
 
     config TB_ETH_STATIC_IP
         bool "Use a static IP instead of DHCP"
