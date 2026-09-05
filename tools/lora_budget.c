@@ -13,7 +13,7 @@
  *
  * Every formula here is from the SX1276/77/78/79 datasheet (rev 4, sections 4.1.1
  * and 6.4). The three airtime figures already recorded in docs/lora-air-protocol.md
- * -- ~30ms poll, ~51ms empty vital, ~82ms tagged vital -- are asserted at the end,
+ * -- ~30ms poll, ~57ms empty vital, ~87ms tagged vital -- are asserted at the end,
  * so if this tool and the documented link disagree, the build fails rather than
  * quietly producing a different answer.
  */
@@ -23,8 +23,8 @@
 
 /* Packet sizes on this link. lora_poll.h / lora_vital.h are the source. */
 #define POLL_BYTES 5u
-#define VITAL_MIN_BYTES 18u /* LORA_VITAL_FIXED_LEN, no tag scanned */
-#define VITAL_MAX_BYTES 38u /* + LORA_VITAL_RFID_MAX (20) */
+#define VITAL_MIN_BYTES 21u /* LORA_VITAL_FIXED_LEN, no tag scanned */
+#define VITAL_MAX_BYTES 41u /* + LORA_VITAL_RFID_MAX (20) */
 
 #define NODES 20u
 #define PERIOD_MS 15000u
@@ -266,7 +266,7 @@ int main(void)
 	 *
 	 * The table above shows every SF above 7 breaking LORA_POLL_SLOT_MS, which
 	 * makes it look like the link is airtime-bound and stuck at SF7. It is not.
-	 * At the current setting the reply is 82ms of a 237ms timeout: 155ms -- 65%
+	 * At the current setting the reply is 87ms of a 242ms timeout: 155ms -- 64%
 	 * of the slot -- is the node's reply deadline plus mode switch, spent waiting
 	 * for a node to notice a poll it already received.
 	 *
@@ -300,8 +300,8 @@ int main(void)
 	}
 	printf("\nSF9/BW250 (+2.0dB, x1.16 range) fits the existing 250ms slot once "
 	       "the node deadline is <=70ms.\n");
-	printf("SF9/BW125 (+5.0dB, x1.47 range) needs the slot at ~300ms; a 20-node "
-	       "cycle is then 6.4s of 15s -- still comfortable.\n\n");
+	printf("SF9/BW125 (+5.0dB, x1.47 range) needs the slot at ~450ms; a 20-node "
+	       "cycle is then 11.3s of 15s -- still comfortable.\n\n");
 
 	/*
 	 * THE ANSWER DEPENDS ON HOW MANY NODES THERE ARE, and that is the part the
@@ -478,8 +478,8 @@ int main(void)
 	double vmax7 = time_on_air_ms(7, bw125, 1, VITAL_MAX_BYTES, 8, 1, 0);
 
 	assert(fabs(poll7 - 30.0) < 4.0);  /* documented ~30ms */
-	assert(fabs(vmin7 - 51.0) < 4.0);  /* documented ~51ms */
-	assert(fabs(vmax7 - 82.0) < 5.0);  /* documented ~82ms */
+	assert(fabs(vmin7 - 57.0) < 4.0);  /* documented ~57ms */
+	assert(fabs(vmax7 - 87.0) < 5.0);  /* documented ~87ms */
 
 	/* LDRO must switch itself on exactly where the datasheet says: symbol time
 	 * over 16ms, i.e. SF11 and SF12 at BW125, and not before. Both firmwares
