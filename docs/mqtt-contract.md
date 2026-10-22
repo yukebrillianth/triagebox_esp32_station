@@ -143,6 +143,7 @@ Canonical snake_case. This is what the firmware emits today, byte for byte —
 {
   "victim_rfid": "04A2B3",
   "hr": 118,
+  "hr_source": "ECG",
   "spo2": 91,
   "rr": 28,
   "bp_sys": 121,
@@ -158,6 +159,11 @@ Canonical snake_case. This is what the firmware emits today, byte for byte —
   "ts": 1755500000
 }
 ```
+
+`hr_source` is `"ECG"` or `"PPG"` and appears only together with `hr`: the node uses the
+ECG rate and falls back to the PPG pulse rate when the ECG has been silent for more
+than 10 s (`TB_FLAG_HR_FROM_PPG` in the packet's `flags`). Only the ECG rate has been
+validated against a reference, so consumers should show the source next to the number.
 
 `priority` is one of `RED`, `YELLOW`, `GREEN`, `BLACK` as a string. The numeric
 form (`0=BLACK, 1=RED, 2=YELLOW, 3=GREEN`) exists only inside the binary LoRa

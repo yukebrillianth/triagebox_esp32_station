@@ -19,12 +19,12 @@
  * cJSON if the payload ever gains arrays or objects that vary in shape.
  */
 
-/** Worst case: every key present with a full 20-character hex tag is 236
- * bytes -- tools/test_vital_json.c builds exactly that frame and asserts it
- * fits. A tag of non-printable bytes (\u-escaped at 6 bytes each) would not
+/** Worst case: every key present (hr_source included) with a full
+ * 20-character hex tag is 259 bytes -- tools/test_vital_json.c builds exactly
+ * that frame and asserts it fits. 288 leaves ~30 bytes of headroom. A tag of non-printable bytes (\u-escaped at 6 bytes each) would not
  * fit; that path returns -1 and the caller drops the packet rather than
  * publishing a truncated object. */
-#define TB_VITAL_JSON_MAX 256U
+#define TB_VITAL_JSON_MAX 288U
 
 /**
  * Render @p v (already accepted by lora_vital_valid()) into @p out.

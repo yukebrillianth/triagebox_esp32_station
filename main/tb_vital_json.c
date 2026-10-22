@@ -81,7 +81,12 @@ int tb_vital_json(char *out, size_t cap, const lora_vital_t *v, uint8_t len,
 				 v->victim_rfid_len);
 	}
 	if (v->flags & TB_FLAG_HR_VALID) {
-		at = append(out, cap, at, "\"hr\":%u,", v->hr);
+		/* hr_source says which sensor the rate came from: the node prefers the
+		 * ECG and falls back to the PPG when the ECG has been silent >10 s, and
+		 * only the ECG rate has been validated against a reference. Emitted with
+		 * hr and never without it, so a missing hr cannot carry a source. */
+		at = append(out, cap, at, "\"hr\":%u,\"hr_source\":\"%s\",", v->hr,
+			    (v->flags & TB_FLAG_HR_FROM_PPG) ? "PPG" : "ECG");
 	}
 	if (v->flags & TB_FLAG_SPO2_VALID) {
 		at = append(out, cap, at, "\"spo2\":%u,", v->spo2);
