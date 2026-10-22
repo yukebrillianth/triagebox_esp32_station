@@ -37,13 +37,20 @@ CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 CONFIG_TB_STATION_NUM=1
 CONFIG_TB_STATION_ID="st-01"
 
-# 20 nodes is the proof-of-concept target, so the station polls the full cycle
-# even while fewer boards exist: absent nodes cost a slot of dead air each and
-# publish a retained OFFLINE after ~45s, but node 1's cadence is unaffected
-# (the cycle is paced by LORA_POLL_PERIOD_MS, not by the node count).
-CONFIG_TB_NODE_COUNT=1
-CONFIG_TB_POLL_PERIOD_MS=3000
-CONFIG_TB_POLL_LOG_EVERY=y
+# DEPLOYMENT values (PIMNAS demo: two nodes, one cycle every 15 s).
+#
+# TB_NODE_COUNT is the highest node address the station will ever call. A node's
+# address is set in ITS Menu (1..20), so a node set higher than this is never
+# polled and just looks dead -- raise this together with the number of boards.
+# Absent nodes cost one 250 ms slot of dead air each and publish a retained
+# OFFLINE after ~45 s; the cycle is paced by TB_POLL_PERIOD_MS, not by the count.
+#
+# 15000 is the deployment cadence (see Kconfig). For a walking range test lower
+# TB_POLL_PERIOD_MS to 2000-3000 and turn the verdict log back on, then put them
+# back: nothing enforces it at runtime.
+CONFIG_TB_NODE_COUNT=2
+CONFIG_TB_POLL_PERIOD_MS=15000
+# CONFIG_TB_POLL_LOG_EVERY is not set
 
 # Direct Ethernet cable to the PC, or an unmanaged switch for several stations:
 # no DHCP server either way, and Windows desktop cannot provide one (that role
