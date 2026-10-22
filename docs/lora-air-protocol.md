@@ -101,15 +101,15 @@ it both stations poll node 1, node 1 answers both, and the two replies collide a
 are lost with no error anywhere. Two channels (433 and 434 MHz — see "Channel
 plan") avoid the problem entirely, and are the reason filtering is still optional.
 
-## Uplink: the reply (node → station, 18–38 bytes)
+## Uplink: the reply (node → station, 21–41 bytes)
 
 `lora_vital_t` from `Core/Inc/lora_vital.h`, unchanged from the free-running
 design — only *when* it is sent has changed, not what it contains. Transmit
-`lora_vital_len(&v)` bytes: the 18-byte fixed part plus however many characters
+`lora_vital_len(&v)` bytes: the 21-byte fixed part plus however many characters
 of RFID tag there are, which is usually zero.
 
 The station validates with `lora_vital_valid()` and drops anything that fails, so
-the fields that must be right are `version` (0x01) and `victim_rfid_len` (≤ 20 and
+the fields that must be right are `version` (0x02) and `victim_rfid_len` (≤ 20 and
 consistent with the length actually transmitted).
 
 `node_id` in the reply must be the node's own address. **The station checks it
@@ -131,12 +131,19 @@ whenever that read fails, a real percentage otherwise.
 the flag set is published as current; a fresh reading with the flag clear is
 thrown away. Set them honestly.
 
+`esi`, `age` and `gender` have no flag bit — they are not measurements. Each
+carries its own `0` sentinel (`LORA_VITAL_*_NONE`) and the station omits the key
+for it, the same rule as `battery`: 0 is safe for all three because the ESI scale
+starts at 1, no patient is 0 years old, and 0 is not an ASCII letter. All three
+reach the node from the ESP32 over I²C (`TB_REG_HOST_AGE/GENDER/ESI`); the node
+measures none of them.
+
 ## Timing — the part that bites
 
 ```
 station:  [--- poll ~30ms ---]                          [--- next poll ---]
 node:                          (snapshot + turnaround)
-node:                            [------ reply 51-82ms ------]
+node:                            [------ reply 57-87ms ------]
                           |<----------- 250ms slot ----------->|
 ```
 
@@ -186,7 +193,7 @@ the same distinction (`ESP_ERR_INVALID_CRC`).
 The node measures how long a poll may have sat unnoticed — bounded by the
 interval between two consecutive DIO0 checks, i.e. one superloop pass — and if
 that exceeds `LORA_REPLY_DEADLINE_MS` (150 ms in `Core/Src/main.c`) it **does not
-reply at all**. 150 + ~90 ms of reply airtime stays inside the 250 ms slot; a
+reply at all**. 150 + ~92 ms of reply airtime stays inside the 250 ms slot; a
 reply built on a staler poll might not.
 
 From the station this is indistinguishable from a miss, and that is the intended
@@ -227,8 +234,8 @@ place for it to fail.
 
 ## Airtime budget
 
-At the settings above: a poll is ~31 ms, an empty vital ~51 ms, a vital with a
-20-character tag ~82 ms. Those figures are no longer hand-computed —
+At the settings above: a poll is ~31 ms, an empty vital ~57 ms, a vital with a
+20-character tag ~87 ms. Those figures are no longer hand-computed —
 `tools/lora_budget.c` derives them from the datasheet formulas and asserts them,
 so if they and this document ever disagree the tool fails to build:
 
@@ -245,12 +252,12 @@ This is the single most useful number the tool produced, and it inverts the
 obvious conclusion.
 
 A 20-node cycle at SF7 is 5.6 s of the 15 s period, and the station transmits 4.1%
-duty while each node stays at 0.55% — all comfortable. But look at where one slot
+duty while each node stays at 0.58% — all comfortable. But look at where one slot
 goes:
 
-| Component | ms | Share of the 237 ms the station must wait |
+| Component | ms | Share of the 242 ms the station must wait |
 | --- | --- | --- |
-| Reply airtime (tagged vital) | 82 | 35% |
+| Reply airtime (tagged vital) | 87 | 36% |
 | Node reply deadline (`LORA_REPLY_DEADLINE_MS`) | 150 | 63% |
 | RX→TX mode switch | ~5 | 2% |
 
@@ -266,11 +273,11 @@ Raising SF is what buys range: each step is 2.5 dB of receiver sensitivity, and
 
 | Config | Sensitivity | Budget vs now | Range × (n=3) | Needs |
 | --- | --- | --- | --- | --- |
-| SF7/BW125 (now) | −124.5 dBm | — | 1.00 | fits, 237 ms slot |
+| SF7/BW125 (now) | −124.5 dBm | — | 1.00 | fits, 242 ms slot |
 | SF9/BW250 | −126.5 dBm | +2.0 dB | 1.16 | node deadline ≤70 ms |
-| SF9/BW125 | −129.5 dBm | +5.0 dB | 1.47 | slot ~430 ms |
-| SF10/BW125 | −132.0 dBm | +7.5 dB | 1.78 | slot ~650 ms, 18 s cycle — **does not fit** |
-| SF12/BW125 | −137.0 dBm | +12.5 dB | 2.61 | 59 s cycle, 110% TX duty — **impossible** |
+| SF9/BW125 | −129.5 dBm | +5.0 dB | 1.47 | slot ~445 ms |
+| SF10/BW125 | −132.0 dBm | +7.5 dB | 1.78 | slot ~690 ms, 19 s cycle — **does not fit** |
+| SF12/BW125 | −137.0 dBm | +12.5 dB | 2.61 | 62 s cycle, 110% TX duty — **impossible** |
 
 Range multiples are relative, deliberately. Absolute distance at 433 MHz across a
 disaster site is set by Fresnel-zone obstruction and body absorption, not by any

@@ -19,7 +19,11 @@
  * cJSON if the payload ever gains arrays or objects that vary in shape.
  */
 
-/** Worst case: every key present with a 20-character tag is ~200 bytes. */
+/** Worst case: every key present with a full 20-character hex tag is 236
+ * bytes -- tools/test_vital_json.c builds exactly that frame and asserts it
+ * fits. A tag of non-printable bytes (\u-escaped at 6 bytes each) would not
+ * fit; that path returns -1 and the caller drops the packet rather than
+ * publishing a truncated object. */
 #define TB_VITAL_JSON_MAX 256U
 
 /**

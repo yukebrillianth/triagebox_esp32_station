@@ -89,9 +89,10 @@ int tb_vital_json(char *out, size_t cap, const lora_vital_t *v, uint8_t len,
 	if (v->flags & TB_FLAG_RR_VALID) {
 		at = append(out, cap, at, "\"rr\":%u,", v->rr);
 	}
-	/* Permanently clear on this hardware -- nothing measures pressure. Kept
-	 * as a flag test rather than deleted so the day a cuff appears, this
-	 * starts publishing without anyone remembering to come back here. */
+	/* No longer permanently clear: BP is the ESP32's ML prediction and the
+	 * node sets this bit only while a validated pair stands (see
+	 * TB_FLAG_BP_VALID in tb_regs.h). The flag test is what still keeps a
+	 * boot-time or unvalidated 0/0 off the air. */
 	if (v->flags & TB_FLAG_BP_VALID) {
 		at = append(out, cap, at, "\"bp_sys\":%u,\"bp_dia\":%u,",
 			    v->bp_sys, v->bp_dia);
@@ -112,6 +113,30 @@ int tb_vital_json(char *out, size_t cap, const lora_vital_t *v, uint8_t len,
 		at = append(out, cap, at,
 			    "\"priority\":\"%s\",\"confidence\":%u.%02u,", prio,
 			    pct / 100U, pct % 100U);
+	}
+
+	/* esi/age/gender: not measurements, so they have no TB_FLAG_ bit -- each
+	 * carries its own 0 sentinel and 0 is safe for all three (the ESI scale
+	 * starts at 1, no patient is 0 years old, 0 is not an ASCII letter). Same
+	 * omit-never-substitute rule as battery: a 0 age reads as a newborn.
+	 *
+	 * esi is emitted independently of priority rather than riding with it like
+	 * confidence does: it is the one field the colour cannot carry, since
+	 * tb_classify() collapses ESI 3/4/5 all into GREEN. An unscored packet is
+	 * withheld whole by station_poll.c, so the pair cannot disagree anyway. */
+	if (v->esi != LORA_VITAL_ESI_NONE) {
+		at = append(out, cap, at, "\"esi\":%u,", v->esi);
+	}
+	if (v->age != LORA_VITAL_AGE_NONE) {
+		at = append(out, cap, at, "\"age\":%u,", v->age);
+	}
+	/* Tested for the two letters rather than against the sentinel, which is
+	 * also the escaping: this byte comes off a radio and lora_vital_valid()
+	 * does not look at it, so a stray '"' would emit malformed JSON the broker
+	 * forwards happily -- the same trap append_rfid() guards. Anything that is
+	 * not an answer is omitted, matching lora_vital_gender_byte()'s own rule. */
+	if (v->gender == 'M' || v->gender == 'F') {
+		at = append(out, cap, at, "\"gender\":\"%c\",", v->gender);
 	}
 
 	/* Unconditional: diagnostics, and 0 is a meaningful value for both. */

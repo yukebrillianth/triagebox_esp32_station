@@ -145,9 +145,14 @@ Canonical snake_case. This is what the firmware emits today, byte for byte —
   "hr": 118,
   "spo2": 91,
   "rr": 28,
+  "bp_sys": 121,
+  "bp_dia": 78,
   "battery": 76,
   "priority": "RED",
   "confidence": 0.87,
+  "esi": 2,
+  "age": 47,
+  "gender": "M",
   "packet_counter": 1421,
   "device_status": 23,
   "ts": 1755500000
@@ -160,13 +165,17 @@ packet and must never appear in JSON. `IMMEDIATE`/`DELAYED`/`MINOR`/`EXPECTANT`
 are not wire values anywhere.
 
 Keys are omitted rather than zeroed when a value is unknown: a node that cannot
-read its battery sends no `battery`. This matters because `0` is a legitimate
-priority (BLACK) and `0` is a legitimate battery level, so a substituted zero
-would be indistinguishable from real data. The backend agrees — as of 2026-08-21
+read its battery sends no `battery`, and an unanswered `esi`/`age`/`gender`
+question sends no key. This matters because `0` is a legitimate priority (BLACK)
+and `0` is a legitimate battery level, so a substituted zero would be
+indistinguishable from real data. The backend agrees — as of 2026-08-21
 `victim_rfid`, `hr`, `spo2`, `rr`, `battery` and `confidence` are optional in its
 Zod schema and nullable in its database, and it has a regression check
 (`npm run check:station`) holding six of this firmware's real outputs. Consumers
-must handle absent keys.
+must handle absent keys. (`bp_sys`/`bp_dia` are already in that schema. `esi`,
+`age` and `gender` are not yet: Zod strips unknown keys rather than rejecting the
+message, so sending them ahead of the backend update is safe but they will not
+reach the database until `vitalSchema` is extended.)
 
 **`priority` is the exception and is always present.** It is the one field the
 backend still requires, because it drives the triage board, the KPIs and the
@@ -186,17 +195,27 @@ the node is sticky once the ESP32 scores, so a vital between scores carries the
 standing triage level rather than dropping back to unscored.
 
 The full list of keys that may be absent is `victim_rfid`, `hr`, `spo2`, `rr`,
-`bp_sys`, `bp_dia`, `battery`, `confidence`, `ts`. Always present:
-`packet_counter`, `device_status`, `priority`, and `confidence` whenever
+`bp_sys`, `bp_dia`, `battery`, `confidence`, `esi`, `age`, `gender`, `ts`. Always
+present: `packet_counter`, `device_status`, `priority`, and `confidence` whenever
 `priority` is (they ride together).
 
 Three differences from the earlier revision of this document, all of them
 firmware reality rather than proposals:
 
-`bp_sys` and `bp_dia` are **never** sent. Nothing on the node measures blood
-pressure; the fields exist in the binary packet with a validity bit that is
-permanently clear. On-board BP estimation was tried and abandoned in August 2026.
-If a cuff is ever added, the flag flips and the keys appear with no other change.
+`bp_sys` and `bp_dia` come from the ESP32's ML model, not from anything on the
+node. The ESP32 predicts the pair, writes it back over the node's internal I²C
+link, and the node stamps it into the packet with `TB_FLAG_BP_VALID` set only
+while a validated pair stands — so the keys now appear whenever a scored reading
+carries a fresh prediction, and are absent before the first one (the bit is clear
+from boot). On-board cuff-based estimation remains abandoned; the "never sent"
+rule from the August 2026 revision is gone because the prediction path is live.
+
+`esi`, `age` and `gender` are the model's raw 1..5 score and the operator's
+typed answers, each arriving from the ESP32 with its own `0`-means-absent
+sentinel. `esi` is deliberately raw, not the triage colour: ESI 3, 4 and 5 all
+collapse to GREEN, and this key is the only place the difference survives.
+`age` is in years (the band's clinical mid-point, i.e. what the model actually
+scored), `gender` is `"M"`/`"F"`.
 
 `ts` is **epoch seconds as a number**, not an ISO-8601 string, and today it is
 **omitted entirely**. The station has no RTC, and the bench topology (a direct
