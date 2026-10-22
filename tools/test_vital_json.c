@@ -53,6 +53,20 @@ int main(void)
 	n = tb_vital_json(buf, sizeof(buf), &v, LORA_VITAL_FIXED_LEN, 1755500000U);
 	assert(n > 0);
 	assert(strstr(buf, "\"hr\":118") != NULL);
+	assert(strstr(buf, "\"hr_source\":\"ECG\"") != NULL);
+	/* The PPG fallback is labelled as such; no hr, no source. */
+	v.flags |= TB_FLAG_HR_FROM_PPG;
+	n = tb_vital_json(buf, sizeof(buf), &v, LORA_VITAL_FIXED_LEN, 1755500000U);
+	assert(strstr(buf, "\"hr_source\":\"PPG\"") != NULL);
+	v.flags &= (uint8_t)~TB_FLAG_HR_FROM_PPG;
+	{
+		uint8_t saved = v.flags;
+		v.flags = TB_FLAG_HR_FROM_PPG; /* the bit alone, hr not valid */
+		n = tb_vital_json(buf, sizeof(buf), &v, LORA_VITAL_FIXED_LEN, 0);
+		assert(strstr(buf, "hr_source") == NULL && strstr(buf, "\"hr\"") == NULL);
+		v.flags = saved;
+	}
+	n = tb_vital_json(buf, sizeof(buf), &v, LORA_VITAL_FIXED_LEN, 1755500000U);
 	assert(strstr(buf, "\"priority\":\"RED\"") != NULL);
 	assert(strstr(buf, "\"confidence\":0.87") != NULL);
 	assert(strstr(buf, "\"battery\":76") != NULL);
